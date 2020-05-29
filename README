@@ -1,0 +1,29 @@
+# Optimal matching of detections across multiple views using integer linear programming. 
+
+## Prerequisites
+
+- numpy
+- scipy
+- imageio
+- OpenCV
+- multiview_calib (https://c4science.ch/diffusion/MULTIVIEWCALIB/)
+
+## Installation
+```
+export PYTHONPATH="...parent folder...:$PYTHONPATH"
+```
+
+## Usage
+
+#### Compute intrinsic and extrinsics parameters:
+Have a look at the `multiview_calib` repository.
+
+#### Perform matching
+
+Have a look at the example folder and in `find_matches.py` for more information on the file contents
+```
+python find_matches.py --detections detections.json --calibration calibration.json --verbose 2 --max_dist 10.0 --dist_none 20.0 --dump_visuals
+```
+
+## License
+
