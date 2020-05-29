@@ -15,7 +15,7 @@ __all__ = ["find_candidate_matches", "build_graph", "find_cliques", "compute_cli
 
 def find_candidate_matches(detections, views, extrinsics, max_dist=10, n_candidates=2):
     """
-    Give a detection in one view, find the best candidates detection on the other view
+    Given a detection in one view, find the best candidates detections on the other views
     
     Parameters
     ----------
@@ -185,6 +185,7 @@ def solve_ilp(g, views, dist_none=3, weight_f=None, verbose=2):
     prob = LpProblem("Matching detections", LpMaximize)
     x = LpVariable.dicts("clique", var_names, 0, 1, LpInteger)
 
+    # cost function: sum of edges' weights (aka distances) forming the clique
     cost_fun = []
     for clique in all_cliques:
 
@@ -196,6 +197,7 @@ def solve_ilp(g, views, dist_none=3, weight_f=None, verbose=2):
 
     prob += lpSum(cost_fun), "Objective function"
 
+    # constraint: if a clique is selected by the algorithem a bunch of other cliques should not
     for node in g.nodes():
 
         if 'None' in node:
@@ -211,7 +213,7 @@ def solve_ilp(g, views, dist_none=3, weight_f=None, verbose=2):
 
         prob += lpSum(constraint) <= 1, ""
 
-    prob.writeLP("graph_matching.lp")
+    #prob.writeLP("graph_matching.lp")
 
     prob.solve()
     final_cost = value(prob.objective)
@@ -220,7 +222,6 @@ def solve_ilp(g, views, dist_none=3, weight_f=None, verbose=2):
 
     if verbose>0:
         print("status:{} final cost:{} elapsed_time:{:0.2}s".format(LpStatus[prob.status], final_cost, elapsed_time))
-        
         
     matches = []
     costs = []
@@ -276,7 +277,7 @@ def triangulate_detections(matches, g, views, extrinsics):
             p3d = triangulate(K1, R1, t1, K2, R2, t2, pt1_undist, pt2_undist)[0]
             p3ds.append(p3d)
 
-        # this can be replaced with an least-squares optimization for better precision
+        # this can potentially be replaced with an least-squares optimization for better precision
         p3d = np.mean(p3ds, 0)
         p3d_std = np.std(p3ds,0).max()
 
