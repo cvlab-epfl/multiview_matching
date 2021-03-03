@@ -148,6 +148,8 @@ def main(detections='detections.json',
 
                         proj = cv2.projectPoints(d3d, rvec, t, K, dist)[0].reshape(-1,2)
                         for p,c in zip(proj,colors):
+                            if p[0]>=img.shape[1] or p[1]>=img.shape[0] or p[0]<0 or p[1]<0:
+                                continue
                             img = cv2.circle(img, (int(p[0]), int(p[1])), radius=int(radius-radius*0.2), 
                                              color=c, thickness=-1, lineType=8, shift=0) 
                             
@@ -188,6 +190,7 @@ if __name__ == "__main__":
                         help='Saves images for visualisation') 
     parser.add_argument("--n_visuals", "-nv", type=int, required=False, default=1)
     parser.add_argument("--filename_images", "-fi", type=str, required=False, default='filenames.json')
+    parser.add_argument("--radius", "-rv", type=int, required=False, default=18)
     
     args = parser.parse_args()
 

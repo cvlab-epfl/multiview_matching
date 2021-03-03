@@ -4,6 +4,7 @@ import json
 import re
 import os
 import ast
+import cv2
 import glob
 import pickle
 import numpy as np
@@ -11,7 +12,7 @@ import numpy as np
 __all__ = ["json_read", "json_write", "pickle_read", "pickle_write", 
            "mkdir", "sort_nicely", "find_files", "invert_Rt",
            "draw_points", "draw_rectangles", "dict_keys_to_string",
-           "dict_keys_from_literal_string"]
+           "dict_keys_from_literal_string", "matching_hungarian"]
 
 def json_read(filename):
     try:
@@ -90,3 +91,53 @@ def invert_Rt(R, t):
     Ri = R.T
     ti = np.dot(-Ri, t)
     return Ri, ti
+
+def matching_hungarian(pts1, pts2, max_dist=0.5):
+    from munkres import Munkres
+    
+    _pts1 = np.array(pts1)
+    _pts2 = np.array(pts2)  
+    
+    assert _pts1.shape[1]==_pts2.shape[1]
+
+    n1 = _pts1.shape[0]    
+    n2 = _pts2.shape[0]
+    
+    n_max = max(n1, n2)
+    
+    if n_max==0:
+        return [], []
+
+    # building the cost matrix based on the distance between 
+    # detections and ground-truth positions
+    matrix = np.ones((n_max, n_max))*9999999
+    for i in range(n1):    
+        for j in range(n2):
+
+            # euclidan distance
+            dist = np.sqrt(np.sum((p1-p2)**2 for p1, p2 in zip(_pts1[i], _pts2[j])))
+            
+            if dist <= max_dist:
+                matrix[i,j] = dist
+
+    indexes = Munkres().compute(matrix.copy())
+   
+    matches1 = []
+    matches2 = []
+    distances = []
+    for i, j in indexes:
+        value = matrix[i][j]
+        if value <= max_dist:
+            matches1.append(i)
+            matches2.append(j)
+            distances.append(value)
+
+    return matches1, matches2, distances
+
+def undistort_points(points, K, distCoeffs, norm_coord=False, newcameramtx=None):
+    points_ = np.reshape(points, (-1,1,2))
+    if newcameramtx is None:
+        newcameramtx = K
+    points_ = cv2.undistortPoints(np.float32(points_), K, distCoeffs, P=newcameramtx, R=None)
+    points_ = np.reshape(points_, (-1,2))
+    return points_
