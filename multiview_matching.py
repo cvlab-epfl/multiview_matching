@@ -67,6 +67,12 @@ def find_candidate_matches(detections, views, calibration, max_dist=10, n_candid
     n_candidates : int
         max number of candidates per detection in each view
     """
+    
+    for view,ds in detections.items():
+        K = np.array(calibration[view]['K'])     
+        dist = np.array(calibration[view]['dist'])
+        for d in ds:
+            d.position_undist = cv2.undistortPoints(np.reshape(d.position,(1,2)),K,dist,P=K)[0].squeeze()
 
     sel_indexes = {}
     for view1 in views:
@@ -78,7 +84,8 @@ def find_candidate_matches(detections, views, calibration, max_dist=10, n_candid
         t1 = np.array(calibration[view1]['t'])
 
         if len(detections[view1])==0:
-            continue        
+            continue
+            
         positions_undist1 = np.reshape([detection.position_undist 
                                         for detection in detections[view1]], (-1,2))
 
@@ -95,7 +102,9 @@ def find_candidate_matches(detections, views, calibration, max_dist=10, n_candid
                 F = fundamental_from_poses(K1, R1, t1, K2, R2, t2)
 
                 if len(detections[view2])==0:
-                    continue                
+                    sel_indexes[view1][view2] = [([],[])]*len(detections[view1])
+                    continue         
+                    
                 positions_undist2 = np.reshape([detection.position_undist 
                                                 for detection in detections[view2]], (-1,2))
 
@@ -179,31 +188,23 @@ def build_graph(detections, views, calibration, max_dist=10, n_candidates=2,
                 n1 = "{}-{}".format(view1, idx1)
                 detection1 = detections[view1][idx1]
                 detection1.node = n1
-                g.add_node(n1, detection=detection1)
+                g.add_node(n1, detection=detection1)              
 
-                if len(idxs2)==0:
-                    # no candidates in view2 therefore connect to a fake detection
-                    n2 = "{}-None".format(view2)
-                    g.add_node(n2, detection=None)
-                    g.add_edge(n1, n2, distances=[distance_none]) 
-                else:
-                    
-                    # TODO: can I simplify this by simply addign an edge to None all the times?
-                    n2_none = "{}-None".format(view2)
-                    if not g.has_edge(n1, n2_none):
-                        g.add_edge(n1, n2_none, distances=[distance_none])               
+                for idx2,distance in zip(idxs2, distances):
+                    n2 = "{}-{}".format(view2, idx2)
+                    detection2 = detections[view2][idx2]
+                    detection2.node = n2
+                    g.add_node(n2, detection=detection2)
 
-                    for idx2,distance in zip(idxs2, distances):
-                        n2 = "{}-{}".format(view2, idx2)
-                        detection2 = detections[view2][idx2]
-                        detection2.node = n2
-                        g.add_node(n2, detection=detection2)
-
-                        if g.has_edge(n1, n2):
-                            data = g.get_edge_data(n1, n2)
-                            data['distances'].append(distance)
-                        else:
-                            g.add_edge(n1, n2, distances=[distance])
+                    if g.has_edge(n1, n2):
+                        data = g.get_edge_data(n1, n2)
+                        data['distances'].append(distance)
+                    else:
+                        g.add_edge(n1, n2, distances=[distance])
+                        
+                n2_none = "{}-None".format(view2)
+                if not g.has_edge(n1, n2_none):
+                    g.add_edge(n1, n2_none, distances=[distance_none])                         
 
     # make sure there is an edge connecting all fake detections!
     # this serves the purpose of closing the cliques
@@ -254,9 +255,12 @@ def solve_ilp(g, views, weight_f=None, verbose=2):
     # find all the candidate cliques (this is the bottleneck of this algorithem)
     all_cliques = find_cliques(g, n=n_views)           
     all_cliques_names = [str(i) for i in range(len(all_cliques))]
-    all_cliques_costs = [compute_clique_cost(g, clique, weight_f) for clique in all_cliques]   
+    all_cliques_costs = [compute_clique_cost(g, clique, weight_f) for clique in all_cliques]  
+    
+    if verbose>0:
+        print("number of possible cliques: {}".format(len(all_cliques)))
 
-    prob = LpProblem("Matching detections", LpMaximize)
+    prob = LpProblem("Matching_detections", LpMaximize)
     x = LpVariable.dicts("clique", all_cliques_names, 0, 1, LpInteger)
 
     # cost function
@@ -274,7 +278,7 @@ def solve_ilp(g, views, weight_f=None, verbose=2):
 
     #prob.writeLP("graph_matching.lp")
 
-    prob.solve()
+    prob.solve(PULP_CBC_CMD(msg=0))
     final_cost = value(prob.objective)
 
     elapsed_time = time.time()-start_time
@@ -303,13 +307,19 @@ def triangulate(K1, R1, t1, K2, R2, t2, pts1_undist, pts2_undist):
     tri = tri[:,:3]/tri[:,[3]]  
     return tri
 
-def triangulate_cliques(cliques, calibration):
+def find_outliers(data, m=2.):
+    d = np.abs(data - np.median(data))
+    mdev = np.median(d)
+    s = d / (mdev if mdev else 1.)
+    return s < m
 
-    detections_3d = []
-    #traing_std = []
+def triangulate_cliques(cliques, calibration, outliers_rejection=True, m=2.0):
+
+    positions_3d = []
     for clique in cliques:
 
         p3ds = []
+        depths = []
         for detection1,detection2 in list(itertools.combinations(clique, 2)):
 
             view1 = detection1.view
@@ -326,14 +336,28 @@ def triangulate_cliques(cliques, calibration):
 
             p3d = triangulate(K1, R1, t1, K2, R2, t2, pt1_undist, pt2_undist)[0]
             p3ds.append(p3d)
-
-        p3d = np.median(p3ds, 0)
-        #p3d_std = np.std(p3ds,0).max()
-
-        detections_3d.append(Detection3D(index=clique[0].index, 
-                                         position=p3d, 
-                                         clique=clique,
-                                         datetime=clique[0].datetime))
-        #traing_std.append(p3d_std)
+            '''
+            depth1 = np.dot(R1, p3d.reshape(3,1))[2] + t1[2]
+            depth2 = np.dot(R2, p3d.reshape(3,1))[2] + t2[2]
+            depths.append(depth1)
+            depths.append(depth2)
+            '''
+            
+        #depths = np.array(depths)
+        #weights = depths/depths.sum()
+        #p3d = np.dot(np.repeat(p3ds, 2, axis=0).T, weights).ravel()
         
-    return detections_3d
+        if outliers_rejection:
+            if len(p3ds)>2:
+                _p3ds = np.array(p3ds)
+                mask = np.logical_and.reduce([find_outliers(_p3ds[:,0], m=m), 
+                                              find_outliers(_p3ds[:,1], m=m),
+                                              find_outliers(_p3ds[:,2], m=m)])
+                if np.sum(mask)>1:
+                    p3ds = _p3ds[mask]
+        
+        p3d = np.mean(p3ds, 0)
+
+        positions_3d.append(p3d)
+        
+    return positions_3d
