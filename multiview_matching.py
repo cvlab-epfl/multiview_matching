@@ -1,3 +1,7 @@
+#----------------------------------------------------------------------------
+# Created By  : Leonardo Citraro leonardo.citraro@epfl.ch
+# Date: 2021
+# --------------------------------------------------------------------------
 import os
 import sys
 import time
@@ -7,7 +11,7 @@ import networkx as nx
 import cv2
 from pulp import *
 
-from multiview_calib.twoview_geometry import draw_epilines, fundamental_from_poses, compute_epilines, distance_point_line
+from .utils.twoview_geometry import fundamental_from_poses, compute_epilines, distance_point_line
 
 __all__ = ["Detection","Detection2D", "Detection3D", "find_candidate_matches", 
            "build_graph", "find_cliques", "compute_clique_cost", "solve_ilp", 
@@ -241,8 +245,8 @@ def compute_clique_cost(g, clique, weight_f=None):
         
     return sum(cost_clique)/len(cost_clique)
 
-def weight_funcion(distance):
-    return 1*np.exp(-distance**2/4)
+def weight_funcion(distance, sigma=1):
+    return 1*np.exp(-distance**2/sigma**2)
 
 def solve_ilp(g, views, weight_f=None, verbose=2):
 
@@ -253,7 +257,12 @@ def solve_ilp(g, views, weight_f=None, verbose=2):
         weight_f = weight_funcion
     
     # find all the candidate cliques (this is the bottleneck of this algorithem)
-    all_cliques = find_cliques(g, n=n_views)           
+    if verbose>2:
+        start_time = time.time()
+    all_cliques = find_cliques(g, n=n_views) 
+    if verbose>2:
+        elapsed_time = time.time()-start_time
+        print("Time required to find all cliques {:.3f}s".format(elapsed_time))
     all_cliques_names = [str(i) for i in range(len(all_cliques))]
     all_cliques_costs = [compute_clique_cost(g, clique, weight_f) for clique in all_cliques]  
     
@@ -296,7 +305,7 @@ def solve_ilp(g, views, weight_f=None, verbose=2):
             clique_dets = [g.nodes[n]['detection'] for n in clique if 'None' not in n]
             if len(clique_dets)>1:
                 cliques.append(clique_dets)
-                costs.append(cost)
+                costs.append(float(cost))
                     
     return cliques, costs
 
@@ -336,16 +345,6 @@ def triangulate_cliques(cliques, calibration, outliers_rejection=True, m=2.0):
 
             p3d = triangulate(K1, R1, t1, K2, R2, t2, pt1_undist, pt2_undist)[0]
             p3ds.append(p3d)
-            '''
-            depth1 = np.dot(R1, p3d.reshape(3,1))[2] + t1[2]
-            depth2 = np.dot(R2, p3d.reshape(3,1))[2] + t2[2]
-            depths.append(depth1)
-            depths.append(depth2)
-            '''
-            
-        #depths = np.array(depths)
-        #weights = depths/depths.sum()
-        #p3d = np.dot(np.repeat(p3ds, 2, axis=0).T, weights).ravel()
         
         if outliers_rejection:
             if len(p3ds)>2:
